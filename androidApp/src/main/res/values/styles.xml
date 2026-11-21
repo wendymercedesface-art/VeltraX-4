@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.VeltraX" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#080811</item>
+        <item name="android:navigationBarColor">#080811</item>
+        <item name="android:windowBackground">#0A0912</item>
+        <item name="android:colorPrimary">#B15CFF</item>
+        <item name="android:colorAccent">#7525F5</item>
+    </style>
+</resources>
