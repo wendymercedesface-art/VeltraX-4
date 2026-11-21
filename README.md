@@ -49,4 +49,4 @@ JDK 17 + IntelliJ / Android Studio. `:desktopApp:run` o `:desktopApp:packageMsi`
 
 ## Notas
 
-Este ZIP no incluye `gradlew` ni APK/MSI precompilados. Usa Android Studio o los workflows de GitHub Actions.
+Este ZIP no incluye APK/MSI precompilados. Usa Android Studio o los workflows de GitHub Actions.
