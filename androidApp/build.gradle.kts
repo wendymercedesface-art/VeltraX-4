@@ -14,8 +14,8 @@ android {
         applicationId = "com.veltrax.music"
         minSdk = 29
         targetSdk = 35
-        versionCode = 41
-        versionName = "4.1"
+        versionCode = 42
+        versionName = "4.2"
     }
 
     buildFeatures {

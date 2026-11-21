@@ -9,6 +9,33 @@ class LibraryStore(context: Context) {
 
     private val prefs = context.getSharedPreferences("veltrax_library_2", Context.MODE_PRIVATE)
 
+    data class Appearance(
+        val palette: String = "aurora",
+        val lightMode: Boolean = false,
+        val compactRows: Boolean = false,
+        val animations: Boolean = true
+    )
+
+    fun appearance(): Appearance = Appearance(
+        palette = prefs.getString("appearance_palette", "aurora")
+            ?.takeIf { it in setOf("aurora", "violet", "sunset", "emerald") } ?: "aurora",
+        lightMode = prefs.getBoolean("appearance_light", false),
+        compactRows = prefs.getBoolean("appearance_compact", false),
+        animations = prefs.getBoolean("appearance_animations", true)
+    )
+
+    fun saveAppearance(appearance: Appearance) {
+        val safePalette = appearance.palette.takeIf {
+            it in setOf("aurora", "violet", "sunset", "emerald")
+        } ?: "aurora"
+        prefs.edit()
+            .putString("appearance_palette", safePalette)
+            .putBoolean("appearance_light", appearance.lightMode)
+            .putBoolean("appearance_compact", appearance.compactRows)
+            .putBoolean("appearance_animations", appearance.animations)
+            .apply()
+    }
+
     fun favorites(): Set<String> = getArray("favorites").toSet()
 
     fun toggleFavorite(uri: String) {

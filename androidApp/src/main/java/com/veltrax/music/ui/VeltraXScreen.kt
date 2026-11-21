@@ -1,5 +1,6 @@
 package com.veltrax.music.ui
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -28,6 +29,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -49,6 +51,7 @@ import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.AlertDialog
@@ -69,17 +72,21 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -102,33 +109,50 @@ import com.veltrax.music.data.Song
 import com.veltrax.music.download.DownloadWorker
 import kotlinx.coroutines.delay
 
-// ——— Personalización VeltraX (sin cambios) ———
-private val Background = Color(0xFF0A0912)
-private val CardBg = Color(0xFF191625)
-private val Purple = Color(0xFFB15CFF)
-private val Violet = Color(0xFF7525F5)
-private val Muted = Color(0xFFB3AABF)
-private val TextColor = Color(0xFFF8F5FF)
-private val gradient = Brush.linearGradient(
-    listOf(Color(0xFF6022AD), Color(0xFFB34BFF), Color(0xFF341568))
+private data class AppPalette(
+    val background: Color,
+    val card: Color,
+    val primary: Color,
+    val secondary: Color,
+    val muted: Color,
+    val text: Color,
+    val gradient: Brush,
+    val compactRows: Boolean,
+    val animations: Boolean
 )
-private val colors = darkColorScheme(
-    primary = Purple,
-    secondary = Violet,
-    background = Background,
-    surface = Background,
-    surfaceVariant = CardBg,
-    onBackground = TextColor,
-    onSurface = TextColor,
-    onPrimary = Color.White,
-    outline = Color(0xFF443A57)
+
+private data class PaletteSpec(
+    val primary: Color,
+    val secondary: Color,
+    val background: Color,
+    val card: Color,
+    val muted: Color,
+    val text: Color,
+    val gradient: List<Color>
 )
+
+private val LocalPalette = compositionLocalOf {
+    AppPalette(
+        Color(0xFF071310), Color(0xFF10251F), Color(0xFF67F2CE), Color(0xFF28A989),
+        Color(0xFFA8BDB6), Color(0xFFF1FFF9),
+        Brush.linearGradient(listOf(Color(0xFF126956), Color(0xFF24B895), Color(0xFF15382E))),
+        false, true
+    )
+}
+
+private val Background: Color @Composable get() = LocalPalette.current.background
+private val CardBg: Color @Composable get() = LocalPalette.current.card
+private val Purple: Color @Composable get() = LocalPalette.current.primary
+private val Violet: Color @Composable get() = LocalPalette.current.secondary
+private val Muted: Color @Composable get() = LocalPalette.current.muted
+private val gradient: Brush @Composable get() = LocalPalette.current.gradient
 
 private enum class Tab(val label: String) {
     HOME("Inicio"),
     SEARCH("Buscar"),
     LIBRARY("Biblioteca"),
-    DOWNLOADS("Descargas")
+    DOWNLOADS("Descargas"),
+    SETTINGS("Ajustes")
 }
 
 @Composable
@@ -146,6 +170,7 @@ fun VeltraXScreen(
     val isPlaying by model.isPlaying.collectAsState()
     val position by model.position.collectAsState()
     val duration by model.duration.collectAsState()
+    val appearance by model.appearance.collectAsState()
 
     var selected by remember { mutableStateOf(Tab.HOME) }
     var showPlayer by remember { mutableStateOf(false) }
@@ -167,7 +192,38 @@ fun VeltraXScreen(
         }
     }
 
-    MaterialTheme(colorScheme = colors, typography = Typography()) {
+    val palette = remember(appearance) { createPalette(appearance) }
+    CompositionLocalProvider(LocalPalette provides palette) {
+      MaterialTheme(
+        colorScheme = if (appearance.lightMode) {
+            lightColorScheme(
+                primary = palette.primary,
+                secondary = palette.secondary,
+                background = palette.background,
+                surface = palette.background,
+                surfaceVariant = palette.card,
+                onBackground = palette.text,
+                onSurface = palette.text,
+                onSurfaceVariant = palette.muted,
+                onPrimary = Color.White,
+                outline = palette.muted.copy(alpha = .5f)
+            )
+        } else {
+            darkColorScheme(
+                primary = palette.primary,
+                secondary = palette.secondary,
+                background = palette.background,
+                surface = palette.background,
+                surfaceVariant = palette.card,
+                onBackground = palette.text,
+                onSurface = palette.text,
+                onSurfaceVariant = palette.muted,
+                onPrimary = Color.White,
+                outline = palette.muted.copy(alpha = .35f)
+            )
+        },
+        typography = Typography()
+      ) {
         Scaffold(
             containerColor = Background,
             topBar = { BrandBar() },
@@ -183,7 +239,7 @@ fun VeltraXScreen(
                         )
                     }
                     NavigationBar(
-                        containerColor = Color(0xFF110E1B),
+                        containerColor = CardBg,
                         tonalElevation = 0.dp
                     ) {
                         Tab.entries.forEach { tab ->
@@ -200,6 +256,7 @@ fun VeltraXScreen(
                                             Tab.SEARCH -> Icons.Default.Search
                                             Tab.LIBRARY -> Icons.Default.LibraryMusic
                                             Tab.DOWNLOADS -> Icons.Default.Download
+                                            Tab.SETTINGS -> Icons.Default.Settings
                                         },
                                         contentDescription = tab.label
                                     )
@@ -240,26 +297,36 @@ fun VeltraXScreen(
                         }
                     }
                 }
-                when (selected) {
-                    Tab.HOME -> HomePage(
-                        songs, playlists, model,
-                        onSelectPlaylist = {
-                            selected = Tab.LIBRARY
-                            selectedPlaylist = it
-                        },
-                        onAddSong = { addSong = it }
-                    )
-                    Tab.SEARCH -> SearchPage(
-                        songs, favorites, model,
-                        onAddSong = { addSong = it }
-                    )
-                    Tab.LIBRARY -> LibraryPage(
-                        songs, favorites, playlists, selectedPlaylist, model,
-                        onPlaylist = { selectedPlaylist = it },
-                        onCreate = { createPlaylist = true },
-                        onAddSong = { addSong = it }
-                    )
-                    Tab.DOWNLOADS -> DownloadsPage(downloads, states, model)
+                Crossfade(
+                    targetState = selected,
+                    animationSpec = tween(durationMillis = if (palette.animations) 240 else 0),
+                    label = "tabContent"
+                ) { tab ->
+                    when (tab) {
+                        Tab.HOME -> HomePage(
+                            songs, playlists, model,
+                            onSelectPlaylist = {
+                                selected = Tab.LIBRARY
+                                selectedPlaylist = it
+                            },
+                            onAddSong = { addSong = it }
+                        )
+                        Tab.SEARCH -> SearchPage(
+                            songs, favorites, model,
+                            onAddSong = { addSong = it }
+                        )
+                        Tab.LIBRARY -> LibraryPage(
+                            songs, favorites, playlists, selectedPlaylist, model,
+                            onPlaylist = { selectedPlaylist = it },
+                            onCreate = { createPlaylist = true },
+                            onAddSong = { addSong = it }
+                        )
+                        Tab.DOWNLOADS -> DownloadsPage(downloads, states, model)
+                        Tab.SETTINGS -> AppearancePage(
+                            appearance = appearance,
+                            onChange = model::updateAppearance
+                        )
+                    }
                 }
             }
         }
@@ -340,6 +407,184 @@ fun VeltraXScreen(
                 }
             )
         }
+      }
+    }
+}
+
+private fun createPalette(appearance: LibraryStore.Appearance): AppPalette {
+    val spec = when (appearance.palette) {
+            "violet" -> PaletteSpec(
+                Color(0xFFB15CFF), Color(0xFF7525F5), Color(0xFF0A0912),
+                Color(0xFF191625), Color(0xFFB3AABF), Color(0xFFF8F5FF),
+                listOf(Color(0xFF6022AD), Color(0xFFB34BFF), Color(0xFF341568))
+            )
+            "sunset" -> PaletteSpec(
+                Color(0xFFFFA478), Color(0xFFFF5377), Color(0xFF160D12),
+                Color(0xFF28171D), Color(0xFFC4AEB4), Color(0xFFFFF5F5),
+                listOf(Color(0xFF7E345D), Color(0xFFFF806B), Color(0xFF542343))
+            )
+            "emerald" -> PaletteSpec(
+                Color(0xFF76E5A1), Color(0xFF29A974), Color(0xFF07130E),
+                Color(0xFF11251A), Color(0xFFA8BDB0), Color(0xFFF1FFF5),
+                listOf(Color(0xFF14563C), Color(0xFF34BB7D), Color(0xFF183B2A))
+            )
+            else -> PaletteSpec(
+                Color(0xFF67F2CE), Color(0xFF28A989), Color(0xFF071310),
+                Color(0xFF10251F), Color(0xFFA8BDB6), Color(0xFFF1FFF9),
+                listOf(Color(0xFF126956), Color(0xFF24B895), Color(0xFF15382E))
+            )
+        }
+    val background = if (appearance.lightMode) Color(0xFFF5F4F8) else spec.background
+    val card = if (appearance.lightMode) Color.White else spec.card
+    val muted = if (appearance.lightMode) Color(0xFF625D68) else spec.muted
+    val text = if (appearance.lightMode) Color(0xFF201D25) else spec.text
+    val gradientColors = if (appearance.lightMode) {
+        listOf(spec.secondary, spec.primary, spec.primary.copy(alpha = .8f))
+    } else {
+        spec.gradient
+    }
+    return AppPalette(
+        background, card, spec.primary, spec.secondary, muted, text,
+        Brush.linearGradient(gradientColors),
+        appearance.compactRows,
+        appearance.animations
+    )
+}
+
+@Composable
+private fun AppearancePage(
+    appearance: LibraryStore.Appearance,
+    onChange: (LibraryStore.Appearance) -> Unit
+) {
+    val themeOptions = listOf(
+        Triple("aurora", "Aurora", Color(0xFF67F2CE)),
+        Triple("violet", "Violeta", Color(0xFFB15CFF)),
+        Triple("sunset", "Atardecer", Color(0xFFFFA478)),
+        Triple("emerald", "Esmeralda", Color(0xFF76E5A1))
+    )
+    LazyColumn(
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item { PageHeading("Ajustes", "Haz que VeltraX se sienta tuya") }
+        item {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(CardBg)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("Estilo de color", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                themeOptions.forEach { (id, label, swatch) ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(15.dp))
+                            .background(if (appearance.palette == id) swatch.copy(alpha = .15f) else Background)
+                            .then(
+                                if (appearance.palette == id) Modifier.border(
+                                    1.dp, swatch, RoundedCornerShape(15.dp)
+                                ) else Modifier
+                            )
+                            .clickable { onChange(appearance.copy(palette = id)) }
+                            .padding(horizontal = 13.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            Modifier
+                                .size(25.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(Brush.linearGradient(listOf(swatch, swatch.copy(alpha = .55f))))
+                        )
+                        Spacer(Modifier.width(11.dp))
+                        Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                        if (appearance.palette == id) {
+                            Icon(Icons.Default.Check, "Seleccionado", tint = swatch)
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(CardBg)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("Apariencia", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Elige el modo de color", color = Muted, fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    FilterChip(
+                        selected = !appearance.lightMode,
+                        onClick = { onChange(appearance.copy(lightMode = false)) },
+                        label = { Text("Oscuro") }
+                    )
+                    FilterChip(
+                        selected = appearance.lightMode,
+                        onClick = { onChange(appearance.copy(lightMode = true)) },
+                        label = { Text("Claro") }
+                    )
+                }
+            }
+        }
+        item {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(CardBg)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                PreferenceSwitch(
+                    title = "Lista compacta",
+                    subtitle = "Muestra más canciones en pantalla",
+                    checked = appearance.compactRows,
+                    onCheckedChange = { onChange(appearance.copy(compactRows = it)) }
+                )
+                HorizontalDivider(color = Muted.copy(alpha = .18f))
+                PreferenceSwitch(
+                    title = "Animaciones del reproductor",
+                    subtitle = "Activa o pausa el disco giratorio",
+                    checked = appearance.animations,
+                    onCheckedChange = { onChange(appearance.copy(animations = it)) }
+                )
+            }
+        }
+        item {
+            Text(
+                "Las preferencias se guardan en este dispositivo. Las descargas admiten archivos de audio directos que tengas permiso para guardar.",
+                color = Muted,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun PreferenceSwitch(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = Muted, fontSize = 12.sp)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -685,15 +930,16 @@ private fun SongRow(
     onAdd: (Song) -> Unit
 ) {
     val favorites by model.favorites.collectAsState()
+    val compactRows = LocalPalette.current.compactRows
     Row(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 69.dp),
+            .heightIn(min = if (compactRows) 57.dp else 69.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             Modifier
-                .size(54.dp)
+                .size(if (compactRows) 43.dp else 54.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(gradient)
                 .clickable { model.play(song, queue) },
@@ -732,7 +978,7 @@ private fun SongRow(
             Icon(Icons.Default.PlaylistAdd, "Añadir a playlist", tint = Muted)
         }
     }
-    HorizontalDivider(color = Color(0xFF272131), thickness = .5.dp)
+    HorizontalDivider(color = Muted.copy(alpha = .22f), thickness = .5.dp)
 }
 
 @Composable
@@ -884,7 +1130,7 @@ private fun MiniPlayer(
             .fillMaxWidth()
             .padding(horizontal = 9.dp, vertical = 4.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(Color(0xFF2B1E41))
+            .background(CardBg)
             .padding(horizontal = 11.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -942,16 +1188,20 @@ private fun PlayerSheet(
     onFavorite: () -> Unit
 ) {
     var scrub by remember(song.uri) { mutableFloatStateOf(-1f) }
+    val palette = LocalPalette.current
     val percent = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
-    val pulse = rememberInfiniteTransition(label = "vinyl")
-    val rotation by pulse.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(18000, easing = LinearEasing)
-        ),
-        label = "vinylRotation"
-    )
+    val rotation = if (palette.animations) {
+        val pulse = rememberInfiniteTransition(label = "vinyl")
+        val animatedRotation by pulse.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(18000, easing = LinearEasing)
+            ),
+            label = "vinylRotation"
+        )
+        animatedRotation
+    } else 0f
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
         val discSize = maxWidth * .78f
@@ -961,10 +1211,10 @@ private fun PlayerSheet(
                 .background(
                     Brush.verticalGradient(
                         listOf(
-                            Color(0xFF9A4A9B),
-                            Color(0xFF32172F),
-                            Color.Black,
-                            Color.Black
+                            palette.primary.copy(alpha = .7f),
+                            palette.secondary.copy(alpha = .22f),
+                            Color(0xFF0A0912),
+                            Color(0xFF0A0912)
                         )
                     )
                 )
@@ -1034,7 +1284,7 @@ private fun PlayerSheet(
                             listOf(Color(0xFF5B3A70), Color(0xFF20162B), Color(0xFF09070D))
                         )
                     )
-                    .then(if (playing) Modifier.rotate(rotation) else Modifier),
+                    .then(if (playing && palette.animations) Modifier.rotate(rotation) else Modifier),
                 contentAlignment = Alignment.Center
             ) {
                 Box(
@@ -1056,9 +1306,9 @@ private fun PlayerSheet(
                             .background(
                                 Brush.linearGradient(
                                     listOf(
-                                        Color(0xFFE6A8D8),
-                                        Color(0xFFB8A4E8),
-                                        Color(0xFF5A3477)
+                                        palette.primary,
+                                        palette.secondary,
+                                        palette.primary.copy(alpha = .45f)
                                     )
                                 )
                             ),
@@ -1077,7 +1327,7 @@ private fun PlayerSheet(
                     modifier = Modifier
                         .fillMaxSize(0.99f)
                         .padding(5.dp),
-                    color = Color(0xFFB8A5FF),
+                    color = palette.primary,
                     trackColor = Color.White.copy(alpha = .10f),
                     strokeWidth = 2.dp
                 )
@@ -1093,7 +1343,7 @@ private fun PlayerSheet(
                 enabled = duration > 0,
                 colors = SliderDefaults.colors(
                     thumbColor = Color.White,
-                    activeTrackColor = Color(0xFFB8A5FF),
+                    activeTrackColor = palette.primary,
                     inactiveTrackColor = Color.White.copy(alpha = .22f)
                 )
             )

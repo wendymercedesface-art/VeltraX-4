@@ -46,6 +46,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _downloads = MutableStateFlow(library.downloads())
     val downloads = _downloads.asStateFlow()
 
+    private val _appearance = MutableStateFlow(library.appearance())
+    val appearance = _appearance.asStateFlow()
+
     private val _workStates = MutableStateFlow<Map<String, WorkInfo>>(emptyMap())
     val workStates = _workStates.asStateFlow()
 
@@ -231,6 +234,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (uri.isBlank()) return
         library.toggleFavorite(uri)
         _favorites.value = library.favorites()
+    }
+
+    fun updateAppearance(appearance: LibraryStore.Appearance) {
+        library.saveAppearance(appearance)
+        _appearance.value = library.appearance()
     }
 
     fun createPlaylist(name: String) {
