@@ -12,6 +12,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
+        android:name=".VeltraXApplication"
         android:label="VeltraX"
         android:theme="@style/Theme.VeltraX"
         android:icon="@mipmap/ic_launcher"

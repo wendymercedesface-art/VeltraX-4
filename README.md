@@ -24,6 +24,8 @@ Aplicación de música **local**. Android usa **Kotlin + Jetpack Compose + Mater
 - Controles reproducir / pausa, anterior / siguiente, progreso, playlists y favoritos.
 - Android: servicio Media3, notificación multimedia y widget de inicio.
 - Descargas HTTP/HTTPS de archivos de audio **directos** (hasta 3 segmentos con `Range`).
+- Android: cola en segundo plano limitada a 2 tareas simultáneas, importación de múltiples URLs y persistencia de trabajos.
+- Android: letras LRCLIB bajo demanda, caché local, visualización LRC/A2, ajuste de sincronización, offset por pista y exportación `.lrc`.
 - Interfaz sin canciones de demostración falsas; la apariencia Android se puede personalizar desde Ajustes.
 - Interfaz Android personalizable: cuatro paletas, modo claro/oscuro, densidad y animaciones.
 
@@ -31,6 +33,7 @@ Aplicación de música **local**. Android usa **Kotlin + Jetpack Compose + Mater
 
 - No extrae audio de YouTube, Spotify ni proveedores con DRM, ni evade restricciones de acceso.
 - Solo descarga URLs HTTP/HTTPS directas que entreguen un archivo de audio real y que tengas permiso para guardar.
+- La búsqueda y descarga de letras requiere conexión; las letras ya guardadas y su edición funcionan sin red.
 - MP3 y WAV tienen la mayor compatibilidad; M4A/AAC funcionan en la mayoría de dispositivos.
 
 ## Compilar Android

@@ -17,20 +17,33 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.google.common.util.concurrent.ListenableFuture
 import com.veltrax.music.data.LibraryStore
+import com.veltrax.music.data.LyricsRepository
 import com.veltrax.music.data.MusicRepository
 import com.veltrax.music.data.Song
 import com.veltrax.music.download.DownloadWorker
 import com.veltrax.music.player.PlaybackService
+import com.veltrax.core.LyricLine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.util.UUID
+
+data class LyricsUiState(
+    val songUri: String = "",
+    val lines: List<LyricLine> = emptyList(),
+    val synced: Boolean = false,
+    val offsetMs: Long = 0L,
+    val loading: Boolean = false,
+    val message: String? = null
+)
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repository = MusicRepository(app)
+    private val lyricsRepository = LyricsRepository(app)
     private val library = LibraryStore(app)
     private val workManager = WorkManager.getInstance(app)
 
@@ -63,6 +76,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _duration = MutableStateFlow(0L)
     val duration = _duration.asStateFlow()
+
+    private val _lyrics = MutableStateFlow(LyricsUiState())
+    val lyrics = _lyrics.asStateFlow()
 
     private val _ready = MutableStateFlow(false)
     val playerReady = _ready.asStateFlow()
@@ -230,6 +246,116 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) { }
     }
 
+    fun loadLyrics(song: Song) {
+        viewModelScope.launch {
+            try {
+                val cached = withContext(Dispatchers.IO) { lyricsRepository.cached(song.uri) }
+                _lyrics.value = LyricsUiState(
+                    songUri = song.uri,
+                    lines = cached?.lines.orEmpty(),
+                    synced = cached?.synced ?: false,
+                    offsetMs = withContext(Dispatchers.IO) { lyricsRepository.offset(song.uri) },
+                    message = if (cached == null) {
+                        "No hay letra guardada. Puedes buscarla cuando tengas conexión."
+                    } else null
+                )
+            } catch (error: Exception) {
+                _lyrics.value = LyricsUiState(
+                    songUri = song.uri,
+                    offsetMs = withContext(Dispatchers.IO) { lyricsRepository.offset(song.uri) },
+                    message = "No se pudo leer la letra local: ${error.message ?: "archivo dañado"}"
+                )
+            }
+        }
+    }
+
+    fun searchLyrics(song: Song, query: String = "") {
+        if (_lyrics.value.loading) return
+        _lyrics.value = _lyrics.value.copy(songUri = song.uri, loading = true, message = null)
+        viewModelScope.launch {
+            try {
+                val found = withContext(Dispatchers.IO) { lyricsRepository.lookup(song, query) }
+                if (found == null) {
+                    _lyrics.value = LyricsUiState(
+                        songUri = song.uri,
+                        offsetMs = withContext(Dispatchers.IO) { lyricsRepository.offset(song.uri) },
+                        message = "No se encontró una letra para esta pista."
+                    )
+                } else {
+                    withContext(Dispatchers.IO) { lyricsRepository.save(song.uri, found) }
+                    _lyrics.value = LyricsUiState(
+                        songUri = song.uri,
+                        lines = found.lines,
+                        synced = found.synced,
+                        offsetMs = withContext(Dispatchers.IO) { lyricsRepository.offset(song.uri) },
+                        message = if (found.synced) null else "La letra encontrada no tiene sincronización."
+                    )
+                }
+            } catch (error: IOException) {
+                _lyrics.value = LyricsUiState(
+                    songUri = song.uri,
+                    offsetMs = withContext(Dispatchers.IO) { lyricsRepository.offset(song.uri) },
+                    message = "No se pudo buscar la letra: ${error.message ?: "error de red"}"
+                )
+            } catch (error: Exception) {
+                _lyrics.value = LyricsUiState(
+                    songUri = song.uri,
+                    offsetMs = withContext(Dispatchers.IO) { lyricsRepository.offset(song.uri) },
+                    message = "No se pudo guardar la letra: ${error.message ?: "error local"}"
+                )
+            }
+        }
+    }
+
+    fun adjustLyricsOffset(song: Song, deltaMs: Long) {
+        val current = _lyrics.value
+        if (current.songUri != song.uri) return
+        val offset = (current.offsetMs + deltaMs).coerceIn(-30_000L, 30_000L)
+        _lyrics.value = current.copy(offsetMs = offset)
+        viewModelScope.launch(Dispatchers.IO) { lyricsRepository.saveOffset(song.uri, offset) }
+    }
+
+    fun markNextLyricLine(song: Song, playbackPositionMs: Long) {
+        val current = _lyrics.value
+        if (current.songUri != song.uri || current.lines.isEmpty() || !current.synced) return
+        val adjustedPosition = playbackPositionMs + current.offsetMs
+        val index = current.lines.indexOfFirst { it.timestampMs > adjustedPosition }
+            .takeIf { it >= 0 } ?: current.lines.lastIndex
+        val updated = current.lines.toMutableList()
+        updated[index] = updated[index].copy(
+            timestampMs = adjustedPosition.coerceAtLeast(0L),
+            words = emptyList()
+        )
+        val sorted = updated.sortedBy { it.timestampMs }
+        _lyrics.value = current.copy(lines = sorted, message = null)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                lyricsRepository.save(song.uri, LyricsRepository.Lyrics(sorted, synced = true))
+            } catch (error: IOException) {
+                _lyrics.value = _lyrics.value.copy(message = "No se pudo guardar el ajuste: ${error.message}")
+            }
+        }
+    }
+
+    fun exportLyrics(song: Song): String? {
+        val current = _lyrics.value
+        if (current.songUri != song.uri || !current.synced) return null
+        return try {
+            val adjustedLines = current.lines.map { line ->
+                line.copy(
+                    timestampMs = (line.timestampMs - current.offsetMs).coerceAtLeast(0L),
+                    words = line.words.map { word ->
+                        word.copy(timestampMs = (word.timestampMs - current.offsetMs).coerceAtLeast(0L))
+                    }
+                )
+            }
+            lyricsRepository.export(LyricsRepository.Lyrics(adjustedLines, synced = true))
+        } catch (error: IllegalArgumentException) {
+            _lyrics.value = current.copy(message = error.message)
+            null
+        }
+    }
+
     fun toggleFavorite(uri: String) {
         if (uri.isBlank()) return
         library.toggleFavorite(uri)
@@ -277,6 +403,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         library.addDownload(item)
         _downloads.value = library.downloads()
         submit(item)
+    }
+
+    fun enqueueBulk(input: String): Int {
+        val urls = Regex("""https?://[^\s,;"<>]+""", RegexOption.IGNORE_CASE)
+            .findAll(input)
+            .map { it.value.trimEnd('.', ')', ']', '}') }
+            .distinct()
+            .toList()
+        var added = 0
+        urls.forEachIndexed { index, rawUrl ->
+            val url = Regex("^https?://", RegexOption.IGNORE_CASE)
+                .replace(rawUrl) { it.value.lowercase() }
+            val filename = try {
+                val pathName = java.net.URI(url).path.substringAfterLast('/')
+                java.net.URLDecoder.decode(pathName, Charsets.UTF_8.name())
+                    .takeIf { it.isNotBlank() } ?: "Descarga ${index + 1}.mp3"
+            } catch (_: Exception) {
+                "Descarga ${index + 1}.mp3"
+            }
+            val valid = try {
+                val parsed = java.net.URI(url)
+                parsed.scheme in listOf("https", "http") && !parsed.host.isNullOrBlank()
+            } catch (_: Exception) {
+                false
+            }
+            if (!valid) return@forEachIndexed
+            enqueue(url, filename)
+            added++
+        }
+        return added
     }
 
     private fun submit(item: LibraryStore.DownloadItem) {

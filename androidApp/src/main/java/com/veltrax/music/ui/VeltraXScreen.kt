@@ -1,5 +1,7 @@
 package com.veltrax.music.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -9,6 +11,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,8 +30,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -42,6 +47,7 @@ import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PauseCircle
@@ -58,6 +64,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -88,6 +95,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -96,14 +110,18 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.work.WorkInfo
 import com.veltrax.music.MainViewModel
+import com.veltrax.music.LyricsUiState
 import com.veltrax.music.data.LibraryStore
 import com.veltrax.music.data.Song
 import com.veltrax.music.download.DownloadWorker
@@ -171,12 +189,34 @@ fun VeltraXScreen(
     val position by model.position.collectAsState()
     val duration by model.duration.collectAsState()
     val appearance by model.appearance.collectAsState()
+    val lyrics by model.lyrics.collectAsState()
 
     var selected by remember { mutableStateOf(Tab.HOME) }
     var showPlayer by remember { mutableStateOf(false) }
     var addSong by remember { mutableStateOf<Song?>(null) }
     var selectedPlaylist by remember { mutableStateOf<String?>(null) }
     var createPlaylist by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var pendingLrc by remember { mutableStateOf<String?>(null) }
+    val lrcExporter = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        val content = pendingLrc
+        pendingLrc = null
+        if (uri != null && content != null) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(content) }
+                    ?: throw IllegalStateException("No se pudo crear el archivo LRC")
+                android.widget.Toast.makeText(context, "Letra LRC exportada", android.widget.Toast.LENGTH_SHORT).show()
+            } catch (error: Exception) {
+                android.widget.Toast.makeText(
+                    context,
+                    "No se pudo exportar la letra: ${error.message ?: "error de almacenamiento"}",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -332,6 +372,9 @@ fun VeltraXScreen(
         }
 
         if (showPlayer && playing != null) {
+            LaunchedEffect(showPlayer, playing?.uri) {
+                if (showPlayer) model.loadLyrics(playing!!)
+            }
             Dialog(
                 onDismissRequest = { showPlayer = false },
                 properties = DialogProperties(
@@ -345,12 +388,22 @@ fun VeltraXScreen(
                     position = position,
                     duration = duration,
                     favorite = favorites.contains(playing!!.uri),
+                    lyrics = lyrics,
                     onClose = { showPlayer = false },
                     onToggle = model::togglePlayback,
                     onNext = model::next,
                     onPrevious = model::previous,
                     onSeek = { model.seek(it) },
-                    onFavorite = { model.toggleFavorite(playing!!.uri) }
+                    onFavorite = { model.toggleFavorite(playing!!.uri) },
+                    onSearchLyrics = { model.searchLyrics(playing!!, it) },
+                    onMarkLyric = { model.markNextLyricLine(playing!!, position) },
+                    onLyricsOffset = { model.adjustLyricsOffset(playing!!, it) },
+                    onExportLyrics = {
+                        model.exportLyrics(playing!!)?.let { content ->
+                            pendingLrc = content
+                            lrcExporter.launch("${playing!!.title}.lrc")
+                        }
+                    }
                 )
             }
         }
@@ -989,6 +1042,8 @@ private fun DownloadsPage(
 ) {
     var url by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
+    var bulkInput by remember { mutableStateOf("") }
+    var bulkMessage by remember { mutableStateOf<String?>(null) }
     val valid = remember(url) {
         try {
             val u = java.net.URI(url.trim())
@@ -1047,6 +1102,35 @@ private fun DownloadsPage(
                     color = Muted,
                     fontSize = 12.sp
                 )
+                HorizontalDivider(color = Muted.copy(alpha = .18f))
+                Text("Importación masiva", fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(
+                    value = bulkInput,
+                    onValueChange = { bulkInput = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 4,
+                    label = { Text("Pega URLs o CSV") },
+                    placeholder = { Text("Una URL por línea") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
+                )
+                Button(
+                    enabled = bulkInput.contains(Regex("""https?://""", RegexOption.IGNORE_CASE)),
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        val count = model.enqueueBulk(bulkInput)
+                        bulkMessage = if (count > 0) {
+                            "$count enlaces agregados a la cola"
+                        } else {
+                            "No se encontraron enlaces HTTP o HTTPS válidos."
+                        }
+                        if (count > 0) bulkInput = ""
+                    }
+                ) {
+                    Icon(Icons.Default.Download, null)
+                    Text("  Agregar enlaces a la cola")
+                }
+                bulkMessage?.let { Text(it, color = Muted, fontSize = 12.sp) }
             }
         }
         item { SectionTitle("Cola de descargas") }
@@ -1180,14 +1264,22 @@ private fun PlayerSheet(
     position: Long,
     duration: Long,
     favorite: Boolean,
+    lyrics: LyricsUiState,
     onClose: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
-    onFavorite: () -> Unit
+    onFavorite: () -> Unit,
+    onSearchLyrics: (String) -> Unit,
+    onMarkLyric: () -> Unit,
+    onLyricsOffset: (Long) -> Unit,
+    onExportLyrics: () -> Unit
 ) {
     var scrub by remember(song.uri) { mutableFloatStateOf(-1f) }
+    var showLyrics by remember(song.uri) { mutableStateOf(false) }
+    var editorMode by remember(song.uri) { mutableStateOf(false) }
+    var lyricQuery by remember(song.uri) { mutableStateOf("") }
     val palette = LocalPalette.current
     val percent = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
     val rotation = if (palette.animations) {
@@ -1249,6 +1341,13 @@ private fun PlayerSheet(
                         tint = if (favorite) Purple else Color.White
                     )
                 }
+                IconButton(onClick = { showLyrics = !showLyrics }) {
+                    Icon(
+                        Icons.Default.Lyrics,
+                        "Mostrar letras",
+                        tint = if (showLyrics) Purple else Color.White
+                    )
+                }
             }
             Spacer(Modifier.height(15.dp))
             Row(
@@ -1273,66 +1372,84 @@ private fun PlayerSheet(
                     )
                 }
             }
-            Spacer(Modifier.weight(.55f))
-            Box(
-                Modifier
-                    .size(discSize)
-                    .shadow(24.dp, RoundedCornerShape(50))
-                    .clip(RoundedCornerShape(50))
-                    .background(
-                        Brush.radialGradient(
-                            listOf(Color(0xFF5B3A70), Color(0xFF20162B), Color(0xFF09070D))
-                        )
-                    )
-                    .then(if (playing && palette.animations) Modifier.rotate(rotation) else Modifier),
-                contentAlignment = Alignment.Center
-            ) {
+            if (showLyrics) {
+                LyricsPanel(
+                    song = song,
+                    state = lyrics,
+                    positionMs = position,
+                    editorMode = editorMode,
+                    query = lyricQuery,
+                    onQueryChange = { lyricQuery = it },
+                    onSearch = { onSearchLyrics(lyricQuery) },
+                    onSeek = onSeek,
+                    onToggleEditor = { editorMode = !editorMode },
+                    onMark = onMarkLyric,
+                    onOffset = onLyricsOffset,
+                    onExport = onExportLyrics,
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                Spacer(Modifier.weight(.55f))
                 Box(
                     Modifier
-                        .fillMaxSize(0.94f)
+                        .size(discSize)
+                        .shadow(24.dp, RoundedCornerShape(50))
                         .clip(RoundedCornerShape(50))
-                        .border(1.dp, Color.White.copy(alpha = .18f), RoundedCornerShape(50))
                         .background(
                             Brush.radialGradient(
-                                listOf(Color(0xFF5B405F), Color(0xFF17121E), Color.Black)
+                                listOf(Color(0xFF5B3A70), Color(0xFF20162B), Color(0xFF09070D))
                             )
-                        ),
+                        )
+                        .then(if (playing && palette.animations) Modifier.rotate(rotation) else Modifier),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
                         Modifier
-                            .fillMaxSize(0.79f)
+                            .fillMaxSize(0.94f)
                             .clip(RoundedCornerShape(50))
+                            .border(1.dp, Color.White.copy(alpha = .18f), RoundedCornerShape(50))
                             .background(
-                                Brush.linearGradient(
-                                    listOf(
-                                        palette.primary,
-                                        palette.secondary,
-                                        palette.primary.copy(alpha = .45f)
-                                    )
+                                Brush.radialGradient(
+                                    listOf(Color(0xFF5B405F), Color(0xFF17121E), Color.Black)
                                 )
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            Icons.Default.MusicNote,
-                            null,
-                            tint = Color.White.copy(alpha = .92f),
-                            modifier = Modifier.size(discSize * .23f)
-                        )
+                        Box(
+                            Modifier
+                                .fillMaxSize(0.79f)
+                                .clip(RoundedCornerShape(50))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(
+                                            palette.primary,
+                                            palette.secondary,
+                                            palette.primary.copy(alpha = .45f)
+                                        )
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.MusicNote,
+                                null,
+                                tint = Color.White.copy(alpha = .92f),
+                                modifier = Modifier.size(discSize * .23f)
+                            )
+                        }
                     }
+                    CircularProgressIndicator(
+                        progress = { if (scrub >= 0f) scrub else percent },
+                        modifier = Modifier
+                            .fillMaxSize(0.99f)
+                            .padding(5.dp),
+                        color = palette.primary,
+                        trackColor = Color.White.copy(alpha = .10f),
+                        strokeWidth = 2.dp
+                    )
                 }
-                CircularProgressIndicator(
-                    progress = { if (scrub >= 0f) scrub else percent },
-                    modifier = Modifier
-                        .fillMaxSize(0.99f)
-                        .padding(5.dp),
-                    color = palette.primary,
-                    trackColor = Color.White.copy(alpha = .10f),
-                    strokeWidth = 2.dp
-                )
+                Spacer(Modifier.weight(.65f))
             }
-            Spacer(Modifier.weight(.65f))
             Slider(
                 value = if (scrub >= 0f) scrub else percent,
                 onValueChange = { scrub = it },
@@ -1400,6 +1517,164 @@ private fun PlayerSheet(
                 }
             }
             Spacer(Modifier.height(26.dp))
+        }
+    }
+}
+
+@Composable
+private fun LyricsPanel(
+    song: Song,
+    state: LyricsUiState,
+    positionMs: Long,
+    editorMode: Boolean,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onToggleEditor: () -> Unit,
+    onMark: () -> Unit,
+    onOffset: (Long) -> Unit,
+    onExport: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val adjustedPosition = positionMs + state.offsetMs
+    val focusRequester = remember(song.uri) { FocusRequester() }
+    val lyricsListState = rememberLazyListState()
+    val activeLine = if (state.synced) {
+        state.lines.indexOfLast { it.timestampMs <= adjustedPosition }
+    } else {
+        -1
+    }
+    Column(
+        modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (editorMode && event.type == KeyEventType.KeyDown &&
+                    (event.key == Key.Spacebar || event.key == Key.Enter)
+                ) {
+                    onMark()
+                    true
+                } else false
+            },
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        LaunchedEffect(editorMode) {
+            if (editorMode) focusRequester.requestFocus()
+        }
+        LaunchedEffect(activeLine) {
+            if (activeLine >= 0) {
+                lyricsListState.animateScrollToItem(
+                    activeLine,
+                    scrollOffset = -(lyricsListState.layoutInfo.viewportSize.height / 2)
+                )
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (editorMode) "Editor de sincronización" else "Letra",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onToggleEditor, enabled = state.synced) {
+                Text(if (editorMode) "Listo" else "Editar")
+            }
+            if (state.synced) {
+                TextButton(onClick = onExport) { Text("LRC") }
+            }
+        }
+        if (editorMode && state.synced) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Offset ${state.offsetMs} ms", color = Color.White.copy(alpha = .75f), fontSize = 12.sp,
+                    modifier = Modifier.weight(1f))
+                TextButton(onClick = { onOffset(-50L) }) { Text("−50") }
+                TextButton(onClick = { onOffset(50L) }) { Text("+50") }
+                FilledTonalButton(onClick = onMark) { Text("Marcar · Espacio") }
+            }
+        }
+        if (state.lines.isEmpty()) {
+            Text(
+                state.message ?: "No hay letra guardada.",
+                color = Color.White.copy(alpha = .68f),
+                fontSize = 13.sp
+            )
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Buscar por título o frase") },
+                placeholder = { Text(song.title) }
+            )
+            FilledTonalButton(onClick = onSearch, enabled = !state.loading) {
+                if (state.loading) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(if (state.loading) "Buscando…" else "Buscar letra")
+            }
+        } else {
+            if (state.message != null) {
+                Text(state.message, color = Color.White.copy(alpha = .65f), fontSize = 12.sp)
+            }
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                state = lyricsListState,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                itemsIndexed(state.lines) { index, line ->
+                    val isActive = index == activeLine
+                    val activeWord = line.words.indexOfLast { it.timestampMs <= adjustedPosition }
+                    Text(
+                        text = buildAnnotatedString {
+                            if (line.words.isNotEmpty()) {
+                                line.words.forEachIndexed { wordIndex, word ->
+                                    withStyle(
+                                        SpanStyle(
+                                            color = when {
+                                                isActive && wordIndex == activeWord -> Purple
+                                                isActive -> Color.White
+                                                index < activeLine -> Color.White.copy(alpha = .42f)
+                                                else -> Color.White.copy(alpha = .74f)
+                                            },
+                                            fontWeight = if (isActive && wordIndex == activeWord) {
+                                                FontWeight.Bold
+                                            } else FontWeight.Medium
+                                        )
+                                    ) { append(word.text) }
+                                }
+                            } else {
+                                withStyle(
+                                    SpanStyle(
+                                        color = when {
+                                            isActive -> Color.White
+                                            index < activeLine -> Color.White.copy(alpha = .42f)
+                                            else -> Color.White.copy(alpha = .74f)
+                                        },
+                                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                ) { append(line.text) }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .then(
+                                if (editorMode) Modifier.background(Color.White.copy(alpha = .05f))
+                                else Modifier
+                            )
+                            .clickable(enabled = state.synced) {
+                                onSeek((line.timestampMs - state.offsetMs).coerceAtLeast(0L))
+                            }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        fontSize = if (isActive) 19.sp else 16.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
         }
     }
 }
