@@ -15,7 +15,12 @@ private val audioExtensions = setOf("mp3", "m4a", "aac", "wav", "flac", "ogg", "
 data class DesktopSong(val file: File) {
     val id get() = file.absolutePath
     val title get() = file.nameWithoutExtension.substringAfter(" - ", file.nameWithoutExtension)
-    val artist get() = file.nameWithoutExtension.substringBefore(" - ", "Artista desconocido")
+    val artist get() = file.nameWithoutExtension
+        .takeIf { it.contains(" - ") }
+        ?.substringBefore(" - ")
+        ?.trim()
+        ?.takeUnless { it.isBlank() || it.lowercase() in setOf("<unknown>", "unknown", "unknown artist", "artista desconocido") }
+        ?: "Artista no identificado"
 }
 
 class DesktopStorage {

@@ -149,6 +149,27 @@ private data class PaletteSpec(
     val gradient: List<Color>
 )
 
+private object VeltraXMotion {
+    const val fast = 150
+    const val normal = 180
+    const val slow = 220
+}
+
+private object VeltraXSpacing {
+    val xs = 4.dp
+    val sm = 8.dp
+    val md = 12.dp
+    val lg = 16.dp
+    val xl = 24.dp
+    val xxl = 32.dp
+}
+
+private object VeltraXRadius {
+    val small = 12.dp
+    val medium = 18.dp
+    val large = 26.dp
+}
+
 private val LocalPalette = compositionLocalOf {
     AppPalette(
         Color(0xFF071310), Color(0xFF10251F), Color(0xFF67F2CE), Color(0xFF28A989),
@@ -273,6 +294,8 @@ fun VeltraXScreen(
                         MiniPlayer(
                             song = playing!!,
                             playing = isPlaying,
+                            position = position,
+                            duration = duration,
                             onOpen = { showPlayer = true },
                             onToggle = model::togglePlayback,
                             onNext = model::next
@@ -339,7 +362,10 @@ fun VeltraXScreen(
                 }
                 Crossfade(
                     targetState = selected,
-                    animationSpec = tween(durationMillis = if (palette.animations) 240 else 0),
+                    animationSpec = tween(
+                        durationMillis = if (palette.animations) VeltraXMotion.normal else 0,
+                        easing = androidx.compose.animation.core.FastOutSlowInEasing
+                    ),
                     label = "tabContent"
                 ) { tab ->
                     when (tab) {
@@ -1205,19 +1231,27 @@ private fun DownloadsPage(
 private fun MiniPlayer(
     song: Song,
     playing: Boolean,
+    position: Long,
+    duration: Long,
     onOpen: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit
 ) {
-    Row(
+    val progress = if (duration > 0L) {
+        (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+    Column(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 9.dp, vertical = 4.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(CardBg)
-            .padding(horizontal = 11.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(start = 11.dp, top = 6.dp, end = 11.dp, bottom = 0.dp)
     ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
         Box(
             Modifier
                 .size(46.dp)
@@ -1254,6 +1288,15 @@ private fun MiniPlayer(
         IconButton(onClick = onNext) {
             Icon(Icons.Default.SkipNext, "Siguiente")
         }
+        }
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 5.dp),
+            color = Purple,
+            trackColor = Muted.copy(alpha = .18f)
+        )
     }
 }
 

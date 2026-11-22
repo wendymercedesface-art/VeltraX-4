@@ -2,6 +2,7 @@ package com.veltrax.music.data
 
 import android.content.ContentUris
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -51,19 +52,69 @@ class MusicRepository(private val context: Context) {
                 val uri = ContentUris.withAppendedId(collection, id).toString()
                 val rawTitle = cur.getString(titleCol)
                 val displayName = cur.getString(nameCol)
+                val retriever = readEmbeddedMetadata(uri)
+                val embeddedTitle = retriever["title"]
+                val embeddedArtist = retriever["artist"]
+                val embeddedAlbum = retriever["album"]
                 val title = when {
+                    !embeddedTitle.isNullOrBlank() && !embeddedTitle.isUnknown() -> embeddedTitle
                     !rawTitle.isNullOrBlank() && rawTitle != "<unknown>" -> rawTitle
                     !displayName.isNullOrBlank() -> displayName.substringBeforeLast('.')
                     else -> "Sin título"
                 }
-                val artist = cur.getString(artistCol)
-                    ?.takeUnless { it.isBlank() || it == "<unknown>" }
-                    ?: "Artista desconocido"
-                val album = cur.getString(albumCol)?.takeUnless { it.isBlank() || it == "<unknown>" } ?: ""
+                val artist = embeddedArtist?.takeUnless { it.isUnknown() }
+                    ?: cur.getString(artistCol)?.takeUnless { it.isUnknown() }
+                    ?: inferArtist(title, displayName)
+                val album = embeddedAlbum?.takeUnless { it.isUnknown() }
+                    ?: cur.getString(albumCol)?.takeUnless { it.isUnknown() }
+                    ?: "Música"
                 val duration = cur.getLong(durationCol).coerceAtLeast(0L)
                 songs += Song(uri, title, artist, album, duration)
             }
         }
         songs
     }
+
+    private fun readEmbeddedMetadata(uri: String): Map<String, String?> {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, android.net.Uri.parse(uri))
+            mapOf(
+                "title" to retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE),
+                "artist" to retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST),
+                "album" to retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+            )
+        } catch (_: Exception) {
+            emptyMap()
+        } finally {
+            try {
+                retriever.release()
+            } catch (_: Exception) {
+                Unit
+            }
+        }
+    }
+
+    private fun inferArtist(title: String, displayName: String?): String {
+        val candidates = listOf(title, displayName.orEmpty())
+        candidates.forEach { candidate ->
+            val separated = Regex("""^\s*(.+?)\s+[-–—]\s*(.+)$""").matchEntire(candidate)
+            if (separated != null) {
+                val left = separated.groupValues[1].trim()
+                val right = separated.groupValues[2].trim().substringBeforeLast('.').trim()
+                if (left.isNotBlank() && !left.isUnknown()) return left
+                if (right.isNotBlank() && !right.isUnknown()) return right
+            }
+        }
+        return "Artista no identificado"
+    }
+}
+
+private fun String.isUnknown(): Boolean {
+    val normalized = trim().lowercase()
+    return isBlank() ||
+        normalized == "<unknown>" ||
+        normalized == "unknown" ||
+        normalized == "unknown artist" ||
+        normalized == "artista desconocido"
 }
